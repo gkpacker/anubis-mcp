@@ -385,7 +385,7 @@ defmodule Anubis.Server.Transport.StreamableHTTP.PlugTest do
       assert conn.status == 202
     end
 
-    test "notification to unknown session returns 400", %{opts: opts} do
+    test "notification to unknown session returns 404", %{opts: opts} do
       notification =
         build_notification("notifications/message", %{
           "level" => "info",
@@ -402,7 +402,37 @@ defmodule Anubis.Server.Transport.StreamableHTTP.PlugTest do
         |> put_req_header("mcp-session-id", "unknown-session")
         |> StreamableHTTPPlug.call(opts)
 
-      assert conn.status == 400
+      assert conn.status == 404
+    end
+
+    test "response to unknown session returns 404", %{opts: opts} do
+      response = build_response(%{}, 1)
+      {:ok, body} = Message.encode_response(response, 1)
+
+      conn =
+        :post
+        |> conn("/", body)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("mcp-session-id", "unknown-session")
+        |> StreamableHTTPPlug.call(opts)
+
+      assert conn.status == 404
+    end
+
+    test "request to unknown session returns 404", %{opts: opts} do
+      request = build_request("tools/list")
+      {:ok, body} = Message.encode_request(request, 1)
+
+      conn =
+        :post
+        |> conn("/", body)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("mcp-session-id", "unknown-session")
+        |> StreamableHTTPPlug.call(opts)
+
+      assert conn.status == 404
     end
 
     test "initialize request creates new session", %{opts: opts} do
