@@ -66,7 +66,8 @@ defmodule Anubis.Server.Session do
     {:registry, {:atom, {:default, Anubis.Server.Registry}}},
     {:session_idle_timeout, {{:integer, {:gte, 1}}, {:default, @default_session_idle_timeout}}},
     {:timeout, {:integer, {:default, to_timeout(second: 30)}}},
-    {:task_supervisor, {:required, {:custom, &Anubis.genserver_name/1}}}
+    {:task_supervisor, {:required, {:custom, &Anubis.genserver_name/1}}},
+    {:restored_state, {:map, {:default, nil}}}
   ])
 
   @doc """
@@ -122,6 +123,8 @@ defmodule Anubis.Server.Session do
       timeout: opts.timeout,
       task_supervisor: opts.task_supervisor
     }
+
+    state = maybe_restore_state(state, opts.restored_state)
 
     state = schedule_session_expiry(state)
 
@@ -907,6 +910,25 @@ defmodule Anubis.Server.Session do
     else
       {:noreply, state}
     end
+  end
+
+  # Session restoration
+
+  defp maybe_restore_state(state, nil), do: state
+
+  defp maybe_restore_state(state, restored) do
+    frame = %{state.frame | assigns: restored.frame.assigns, pagination_limit: restored.frame.pagination_limit}
+
+    %{
+      state
+      | protocol_version: restored.protocol_version,
+        protocol_module: restored.protocol_module,
+        initialized: restored.initialized,
+        client_info: restored.client_info,
+        client_capabilities: restored.client_capabilities,
+        log_level: restored.log_level,
+        frame: frame
+    }
   end
 
   # Session serialization

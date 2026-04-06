@@ -330,7 +330,14 @@ if Code.ensure_loaded?(Plug) do
 
     # Session management
 
-    defp find_session(%{registry_mod: mod, registry_name: name}, session_id) do
+    defp find_session(opts, session_id) do
+      case local_lookup(opts, session_id) do
+        {:ok, pid} -> {:ok, pid}
+        {:error, :not_found} -> restore_session_from_store(opts, session_id)
+      end
+    end
+
+    defp local_lookup(%{registry_mod: mod, registry_name: name}, session_id) do
       mod.lookup_session(name, session_id)
     end
 
@@ -347,19 +354,36 @@ if Code.ensure_loaded?(Plug) do
       end
     end
 
-    defp start_new_session(%{server: server, registry_mod: registry_mod, registry_name: registry_name} = opts, session_id) do
+    defp restore_session_from_store(opts, session_id) do
+      with store when store != nil <- Anubis.get_session_store_adapter(),
+           {:ok, saved_state} <- store.load(session_id, []) do
+        restored = Anubis.Server.Session.from_serializable(saved_state)
+        start_new_session(opts, session_id, restored)
+      else
+        _ -> {:error, :not_found}
+      end
+    end
+
+    defp start_new_session(opts, session_id, restored_state \\ nil)
+
+    defp start_new_session(
+           %{server: server, registry_mod: registry_mod, registry_name: registry_name} = opts,
+           session_id,
+           restored_state
+         ) do
       session_config = ServerSupervisor.get_session_config(server)
       session_name = Registry.session_name(server, session_id)
 
-      session_opts = [
-        session_id: session_id,
-        server_module: server,
-        name: session_name,
-        transport: session_config.transport,
-        session_idle_timeout: session_config.session_idle_timeout || 1_800_000,
-        timeout: opts.timeout,
-        task_supervisor: session_config.task_supervisor
-      ]
+      session_opts =
+        [
+          session_id: session_id,
+          server_module: server,
+          name: session_name,
+          transport: session_config.transport,
+          session_idle_timeout: session_config.session_idle_timeout || 1_800_000,
+          timeout: opts.timeout,
+          task_supervisor: session_config.task_supervisor
+        ] ++ if(restored_state, do: [restored_state: restored_state], else: [])
 
       case ServerSupervisor.start_session(server, session_opts) do
         {:ok, pid} ->

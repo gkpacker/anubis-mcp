@@ -10,6 +10,7 @@ defmodule Anubis.Server.Transport.StreamableHTTP.PlugTest do
   alias Anubis.Server.Supervisor, as: ServerSupervisor
   alias Anubis.Server.Transport.StreamableHTTP
   alias Anubis.Server.Transport.StreamableHTTP.Plug, as: StreamableHTTPPlug
+  alias Anubis.Test.MockSessionStore
 
   defp setup_session_config(opts \\ []) do
     task_sup = Registry.task_supervisor_name(StubServer)
@@ -430,6 +431,124 @@ defmodule Anubis.Server.Transport.StreamableHTTP.PlugTest do
         |> put_req_header("content-type", "application/json")
         |> put_req_header("accept", "application/json")
         |> put_req_header("mcp-session-id", "unknown-session")
+        |> StreamableHTTPPlug.call(opts)
+
+      assert conn.status == 404
+    end
+
+    test "request to session in store restores and processes normally", %{opts: opts} do
+      store_session_id = "stored-session-#{System.unique_integer([:positive])}"
+
+      saved_state = %{
+        "id" => store_session_id,
+        "protocol_version" => "2025-03-26",
+        "protocol_module" => "Elixir.Anubis.Protocol.V_2025_03_26",
+        "initialized" => true,
+        "client_info" => %{"name" => "Test", "version" => "1.0"},
+        "client_capabilities" => %{},
+        "log_level" => nil,
+        "pending_requests" => %{},
+        "frame" => %{"assigns" => %{}, "pagination_limit" => nil}
+      }
+
+      MockSessionStore.start_link([])
+      MockSessionStore.save(store_session_id, saved_state, [])
+
+      Application.put_env(:anubis_mcp, :session_store,
+        enabled: true,
+        adapter: MockSessionStore
+      )
+
+      on_exit(fn ->
+        Application.delete_env(:anubis_mcp, :session_store)
+        MockSessionStore.reset!()
+      end)
+
+      request = build_request("ping", %{})
+      {:ok, body} = Message.encode_request(request, 1)
+
+      conn =
+        :post
+        |> conn("/", body)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("mcp-session-id", store_session_id)
+        |> StreamableHTTPPlug.call(opts)
+
+      assert conn.status == 200
+      {:ok, response} = Jason.decode(conn.resp_body)
+      assert response["result"] == %{}
+    end
+
+    test "notification to session in store restores and processes normally", %{opts: opts} do
+      store_session_id = "stored-notif-session-#{System.unique_integer([:positive])}"
+
+      saved_state = %{
+        "id" => store_session_id,
+        "protocol_version" => "2025-03-26",
+        "protocol_module" => "Elixir.Anubis.Protocol.V_2025_03_26",
+        "initialized" => true,
+        "client_info" => %{"name" => "Test", "version" => "1.0"},
+        "client_capabilities" => %{},
+        "log_level" => nil,
+        "pending_requests" => %{},
+        "frame" => %{"assigns" => %{}, "pagination_limit" => nil}
+      }
+
+      MockSessionStore.start_link([])
+      MockSessionStore.save(store_session_id, saved_state, [])
+
+      Application.put_env(:anubis_mcp, :session_store,
+        enabled: true,
+        adapter: MockSessionStore
+      )
+
+      on_exit(fn ->
+        Application.delete_env(:anubis_mcp, :session_store)
+        MockSessionStore.reset!()
+      end)
+
+      notification =
+        build_notification("notifications/message", %{
+          "level" => "info",
+          "data" => "test"
+        })
+
+      {:ok, body} = Message.encode_notification(notification)
+
+      conn =
+        :post
+        |> conn("/", body)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("mcp-session-id", store_session_id)
+        |> StreamableHTTPPlug.call(opts)
+
+      assert conn.status == 202
+    end
+
+    test "request to unknown session with store configured still returns 404", %{opts: opts} do
+      MockSessionStore.start_link([])
+
+      Application.put_env(:anubis_mcp, :session_store,
+        enabled: true,
+        adapter: MockSessionStore
+      )
+
+      on_exit(fn ->
+        Application.delete_env(:anubis_mcp, :session_store)
+        MockSessionStore.reset!()
+      end)
+
+      request = build_request("tools/list")
+      {:ok, body} = Message.encode_request(request, 1)
+
+      conn =
+        :post
+        |> conn("/", body)
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("accept", "application/json")
+        |> put_req_header("mcp-session-id", "totally-unknown")
         |> StreamableHTTPPlug.call(opts)
 
       assert conn.status == 404
